@@ -299,6 +299,34 @@ class SmNormal(Sm):
                   + log_normal_pdf(x[:,1:,:], x[:,:-1,:] + fx[:,:-1,:], self.slv, raxis=[1,2]))
 
         return logp_x         # logp_x size: (batch_size)
+        
+    def nc_lpdf(self, x, u, us, treg, tsub):
+        """Evaluate log probability density for given states, input, and region and subject parameters"""
+        # x shape:    (batch_size, nt, ns)
+        # u shape:    (batch_size, nt) or None
+        # us shape:   (batch_size, nt) or None
+        # treg shape: (batch_size, mreg)
+        # tsub shape: (batch_size, msub)
+
+        batch_size, nt, ns = x.shape
+        # print(x.shape[2], treg.shape[1], tsub.shape[1])
+
+        xaug = [x, tf.repeat(treg[:,None,:], repeats=nt, axis=1), tf.repeat(tsub[:,None,:], repeats=nt, axis=1)]
+        if self.network_input:
+            xaug.append(u[:,:,None])
+        if self.shared_input:
+            xaug.append(us[:,:,None])
+        xaug = tf.concat(xaug, axis=2)
+
+        # xaug shape: (batch_size, nt, ns + mreg + msub [+1] [+1])
+        xaug = tf.reshape(xaug, (batch_size*nt, -1))
+        fx = self.f(xaug)
+        fx = tf.reshape(fx, (batch_size, nt, -1))
+
+        logp_x = (  log_normal_pdf(x[:,0, 0:2], 0., 1., raxis=1)
+                  + log_normal_pdf(x[:,1:,0:2], x[:,:-1,0:2] + fx[:,:-1,0:2], self.slv[:2], raxis=[1,2]))
+
+        return logp_x         # logp_x size: (batch_size)
 
 
     def simulate_subjects(self, w, nt, ic, us, treg, tsub, Ap, bp, olv):
@@ -479,7 +507,6 @@ class RegModel(tf.keras.Model):
         self.upsample_factor = upsample_factor
         self.lambda_a = lambda_a
         self.lambda_x = lambda_x
-
         self.source_model = get_source_model(prediction, ns*2, mreg*2, msub*2, f_units, ng=ng,
                                              network_input=network_input, shared_input=shared_input,
                                              alpha=alpha, activation=activation)
@@ -1028,7 +1055,7 @@ class RegX(RegModel):
         logp_y_x = nc_logp_y_x + sz_logp_y_x
 
         # Prior for states
-        logp_x_nc = self.source_model.lpdf(nc_x, nc_u_upsampled, nc_us, nc_treg, nc_tsub)
+        logp_x_nc = self.source_model.nc_lpdf(nc_x, nc_u_upsampled, nc_us, nc_treg, nc_tsub)
         logp_x_sz = self.source_model.lpdf(sz_x, sz_u_upsampled, sz_us, sz_treg, sz_tsub)
 
         # Approximate posterior

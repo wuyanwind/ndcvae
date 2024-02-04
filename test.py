@@ -149,7 +149,7 @@ def train(model, nc_subj_ind, nc_yobs, nc_u, nc_u_upsampled, sz_subj_ind, sz_yob
         betax = 1
         betap = 1
 
-        nc_index = np.random.randint(low=0, high=nc_subj_ind.shape[0],size=batch_size)
+        nc_index = np.random.randint(low=0, high=nc_subj_ind.shape[0], size=batch_size)
         sz_index = np.random.randint(low=0, high=sz_subj_ind.shape[0], size=batch_size)
 
         nc_subj_ind_train = nc_subj_ind[nc_index]
@@ -294,7 +294,7 @@ class Runner:
         self.betap = betap if callable(betap) else (lambda e: betap)
 
 if __name__ == "__main__":
-    ds_all = sio.loadmat(r'ds.mat')
+    ds_all = sio.loadmat(r'ds_SC100.mat')
     ts_nc = ds_all['ts_nc']
     ts_sz = ds_all['ts_sz']
     SC_nc = ds_all['SC_nc']
@@ -326,11 +326,11 @@ if __name__ == "__main__":
     sz_subj_ind_test, sz_yobs_test, sz_u_test, sz_u_upsampled_test = get_full_dataset(ds_sz, upsample_factor, ~train_mask_sz)
     sz_subj_ind_test = sz_subj_ind_test + ds_nc.nsub
 
-    model = models.RegX(ns=2, mreg=2, msub=2, nreg=68, nsub=509+546, nt=225, nobs=1, prediction='normal',
+    model = models.RegX(ns=2, mreg=2, msub=2, nreg=100, nsub=509+546, nt=225, nobs=1, prediction='normal',
                                shared_input=False)
     lr_schedule = tf.keras.optimizers.schedules.PiecewiseConstantDecay([300000 * ipe, 600000 * ipe], [1e-3, 3e-4, 1e-4])
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    runner = Runner(optimizer=optimizer, batch_size=batch_size, nbatches=15000, nsamples=8, clip_gradients=(-1000, 1000),
+    runner = Runner(optimizer=optimizer, batch_size=batch_size, nbatches=50000, nsamples=8, clip_gradients=(-1000, 1000),
                                   betax=1., betap=linclip(0, 500, 0., 1.))
 
     # Create callback function
