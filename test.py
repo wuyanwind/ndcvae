@@ -10,7 +10,7 @@ import scipy.io as sio
 import models
 import time
 from tqdm import tqdm
-
+from sklearn.model_selection import KFold
 # dataset
 class Dataset:
     """Object to hold the simulated or empirical data"""
@@ -302,7 +302,6 @@ if __name__ == "__main__":
     upsample_factor = 1
     train_ratio = 0.8
     batch_size = 64
-    output_dir = ''
 
     ds_nc = get_ds_nc_sz(ts_nc, SC_nc)
     ds_sz = get_ds_nc_sz(ts_sz, SC_sz)
@@ -310,54 +309,64 @@ if __name__ == "__main__":
     ndata_nc = int(train_ratio * ds_nc.nreg * ds_nc.nsub)
     ndata_sz = int(train_ratio * ds_sz.nreg * ds_sz.nsub)
     ipe = int(np.ceil(ndata_nc / batch_size))
-    train_mask_nc = np.zeros((ds_nc.nsub, ds_nc.nreg), dtype=bool)
-    train_mask_nc[np.unravel_index(np.random.choice(ds_nc.nsub * ds_nc.nreg, ndata_nc, replace=False),
-                                (ds_nc.nsub, ds_nc.nreg))] = True
-    train_mask_sz = np.zeros((ds_sz.nsub, ds_sz.nreg), dtype=bool)
-    train_mask_sz[np.unravel_index(np.random.choice(ds_sz.nsub * ds_sz.nreg, ndata_sz, replace=False),
-                                (ds_sz.nsub, ds_sz.nreg))] = True
-    np.save(os.path.join(output_dir, "train_mask_nc.npy"), train_mask_nc)
-    np.save(os.path.join(output_dir, "train_mask_sz.npy"), train_mask_sz)
 
-    nc_subj_ind, nc_yobs, nc_u, nc_u_upsampled = get_full_dataset(ds_nc, upsample_factor, train_mask_nc)
-    sz_subj_ind, sz_yobs, sz_u, sz_u_upsampled = get_full_dataset(ds_sz, upsample_factor, train_mask_sz)
-    sz_subj_ind = sz_subj_ind + ds_nc.nsub
-    nc_subj_ind_test, nc_yobs_test, nc_u_test, nc_u_upsampled_test = get_full_dataset(ds_nc, upsample_factor, ~train_mask_nc)
-    sz_subj_ind_test, sz_yobs_test, sz_u_test, sz_u_upsampled_test = get_full_dataset(ds_sz, upsample_factor, ~train_mask_sz)
-    sz_subj_ind_test = sz_subj_ind_test + ds_nc.nsub
+    kf = KFold(n_splits=5, shuffle=True, random_state=0)
+    nc_nsamples = np.arange(ds_nc.nsub * ds_nc.nreg)
+    sz_nsamples = np.arange(ds_sz.nsub * ds_sz.nreg)
+    kf_nc = kf.split(nc_nsamples)
+    kf_sz = kf.split(sz_nsamples)
+    for i in range(5):
+        output_dir = 'CV5_'+str(i+1)
+        train_mask_nc = np.zeros((ds_nc.nsub, ds_nc.nreg), dtype=bool)
+        train_index_nc, test_index_nc = next(kf_nc)
+        train_mask_nc[np.unravel_index(train_index_nc, (ds_nc.nsub, ds_nc.nreg))] = True
+        #print('train_index_nc:%s , test_index_nc: %s ' % (train_index_nc[:100], test_index_nc[:100]))
+        #print('train_mask_nc:%s ' % (train_mask_nc[:100]))
+        train_mask_sz = np.zeros((ds_sz.nsub, ds_sz.nreg), dtype=bool)
+        train_index_sz, test_index_sz = next(kf_sz)
+        train_mask_sz[np.unravel_index(train_index_sz, (ds_sz.nsub, ds_sz.nreg))] = True
+        #np.save(os.path.join(output_dir, "train_mask_nc.npy"), train_mask_nc)
+        #np.save(os.path.join(output_dir, "train_mask_sz.npy"), train_mask_sz)
 
-    model = models.RegX(ns=2, mreg=2, msub=2, nreg=100, nsub=509+546, nt=225, nobs=1, prediction='normal',
-                               shared_input=False)
-    lr_schedule = tf.keras.optimizers.schedules.PiecewiseConstantDecay([300000 * ipe, 600000 * ipe], [1e-3, 3e-4, 1e-4])
-    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    runner = Runner(optimizer=optimizer, batch_size=batch_size, nbatches=50000, nsamples=8, clip_gradients=(-1000, 1000),
-                                  betax=1., betap=linclip(0, 500, 0., 1.))
+        nc_subj_ind, nc_yobs, nc_u, nc_u_upsampled = get_full_dataset(ds_nc, upsample_factor, train_mask_nc)
+        sz_subj_ind, sz_yobs, sz_u, sz_u_upsampled = get_full_dataset(ds_sz, upsample_factor, train_mask_sz)
+        sz_subj_ind = sz_subj_ind + ds_nc.nsub
+        nc_subj_ind_test, nc_yobs_test, nc_u_test, nc_u_upsampled_test = get_full_dataset(ds_nc, upsample_factor, ~train_mask_nc)
+        sz_subj_ind_test, sz_yobs_test, sz_u_test, sz_u_upsampled_test = get_full_dataset(ds_sz, upsample_factor, ~train_mask_sz)
+        sz_subj_ind_test = sz_subj_ind_test + ds_nc.nsub
 
-    # Create callback function
-    if not os.path.exists(os.path.join(output_dir, "img")):
-        os.makedirs(os.path.join(output_dir, "img"))
-    if not os.path.exists(os.path.join(output_dir, "models")):
-        os.makedirs(os.path.join(output_dir, "models"))
+        model = models.RegX(ns=2, mreg=2, msub=2, nreg=100, nsub=509+546, nt=225, nobs=1, prediction='normal',
+                                   shared_input=False)
+        lr_schedule = tf.keras.optimizers.schedules.PiecewiseConstantDecay([300000 * ipe, 600000 * ipe], [1e-3, 3e-4, 1e-4])
+        optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+        runner = Runner(optimizer=optimizer, batch_size=batch_size, nbatches=30000, nsamples=8, clip_gradients=(-1000, 1000),
+                                      betax=1., betap=linclip(0, 500, 0., 1.))
 
-    def callback(state, model):
-        if (state.nbatch % 500 != 0):
-            return
-        model.save_weights(os.path.join(output_dir, f"models/model_{state.nbatch:05d}"))
+        # Create callback function
+        if not os.path.exists(os.path.join(output_dir, "img")):
+            os.makedirs(os.path.join(output_dir, "img"))
+        if not os.path.exists(os.path.join(output_dir, "models")):
+            os.makedirs(os.path.join(output_dir, "models"))
 
-    # Run the training
-    start_time = time.time()
-    hist = train(model, nc_subj_ind, nc_yobs, nc_u, nc_u_upsampled, sz_subj_ind, sz_yobs, sz_u, sz_u_upsampled,
-                 nc_subj_ind_test, nc_yobs_test, nc_u_test, nc_u_upsampled_test, sz_subj_ind_test, sz_yobs_test, sz_u_test,
-                 sz_u_upsampled_test, runner, fh=sys.stdout, callback=callback)
+        def callback(state, model):
+            if (state.nbatch % 500 != 0):
+                return
+            model.save_weights(os.path.join(output_dir, f"models/model_{state.nbatch:05d}"))
 
-    dfh = hist.as_dataframe()
+        # Run the training
+        start_time = time.time()
+        hist = train(model, nc_subj_ind, nc_yobs, nc_u, nc_u_upsampled, sz_subj_ind, sz_yobs, sz_u, sz_u_upsampled,
+                     nc_subj_ind_test, nc_yobs_test, nc_u_test, nc_u_upsampled_test, sz_subj_ind_test, sz_yobs_test, sz_u_test,
+                     sz_u_upsampled_test, runner, fh=sys.stdout, callback=callback)
 
-    # Save the history
-    dfh.to_csv(os.path.join(output_dir, "hist.csv"), index=False)
-    # Save the model
-    model.save_weights(os.path.join(output_dir, "model"))
-    end_time = time.time()
-    print("程序运行时间：%.2f秒" % (end_time - start_time))
+        dfh = hist.as_dataframe()
+
+        # Save the history
+        dfh.to_csv(os.path.join(output_dir, "hist.csv"), index=False)
+        # Save the model
+        model.save_weights(os.path.join(output_dir, "model"))
+        end_time = time.time()
+        print("程序运行时间：%.2f秒" % (end_time - start_time))
 
 
 
